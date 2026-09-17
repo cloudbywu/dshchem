@@ -73,16 +73,12 @@ function propsTool(chem) {
 	return defineTool({
 		name: "chem_props",
 		description:
-			"Compute molecular descriptors with RDKit: molecular weight, exact mass, Crippen logP, H-bond donors/acceptors, TPSA, rotatable bonds, aromatic rings, heavy atoms, formal charge, and formula. Optionally request an IUPAC name. Values are tool-computed; cite them as RDKit results, not literature values.",
+			"Compute molecular descriptors with RDKit: molecular weight, exact mass, Crippen logP, H-bond donors/acceptors, TPSA, rotatable bonds, aromatic rings, heavy atoms, formal charge, and formula. Values are tool-computed; cite them as RDKit results, not literature values. For an IUPAC name use chem_pubchem: RDKit has no IUPAC naming API.",
 		parameters: {
 			smiles: {
 				type: "string",
 				required: true,
 				description: "SMILES string of the molecule."
-			},
-			iupac: {
-				type: "boolean",
-				description: "Also attempt an IUPAC name (may fail for exotic molecules)."
 			}
 		},
 		output: {
@@ -102,7 +98,6 @@ function propsTool(chem) {
 					aromaticRings: { type: "integer" },
 					heavyAtoms: { type: "integer" },
 					formalCharge: { type: "integer" },
-					iupacName: { type: "string" },
 					error: { type: "string" }
 				}
 			},
@@ -116,24 +111,14 @@ function propsTool(chem) {
 								`HBD: ${value.hbd}, HBA: ${value.hba}, TPSA: ${value.tpsa}`,
 								`rotatable bonds: ${value.rotatableBonds}, aromatic rings: ${value.aromaticRings}`,
 								`heavy atoms: ${value.heavyAtoms}, formal charge: ${value.formalCharge}`,
-								`canonical: ${value.canonical}`,
-								...(value.iupacName !== undefined && value.iupacName !== null
-									? [`IUPAC: ${value.iupacName}`]
-									: value.iupacError !== undefined
-										? [`IUPAC unavailable: ${value.iupacError}`]
-										: [])
+								`canonical: ${value.canonical}`
 							]
 				)
 		},
 		async execute(args) {
-			const out = await chem.props(args.smiles, { iupac: args.iupac === true });
+			const out = await chem.props(args.smiles);
 			if (out.ok === false) return { error: out.error };
-			const { iupacName, iupacError, ...rest } = out.result;
-			return {
-				...rest,
-				...(iupacName !== undefined ? { iupacName } : {}),
-				...(iupacError !== undefined ? { iupacError } : {})
-			};
+			return out.result;
 		}
 	});
 }
