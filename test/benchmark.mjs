@@ -203,16 +203,18 @@ console.log("== 7. Crossref literature (network) ==");
 const papers = await chem.papersSearch("Suzuki coupling palladium", 3);
 check(
 	"crossref returns DOIs",
-	papers.error === null && papers.papers.length > 0 && papers.papers.every((p) => typeof p.doi === "string" && p.doi !== ""),
+	papers.error === undefined && papers.papers.length > 0 && papers.papers.every((p) => typeof p.doi === "string" && p.doi !== ""),
 	`got ${JSON.stringify(papers).slice(0, 300)}`
 );
 // Schema-conformance guard: the harness rejects null for declared string
 // fields (regression: Crossref entries missing journal/year/abstract broke
 // chem_papers with "value.papers[0].journal must be a string", fixed by
-// omitting absent fields on 2026-08-14).
+// omitting absent fields on 2026-08-14; the success path also had to stop
+// returning `error: null` — the integration schema gate caught that on
+// 2026-09-17, so `error` is ABSENT on success, never null).
 check(
 	"crossref papers carry no null fields",
-	papers.error === null && papers.papers.every((p) => Object.values(p).every((v) => v !== null)),
+	papers.error === undefined && papers.papers.every((p) => Object.values(p).every((v) => v !== null)),
 	`null fields present: ${JSON.stringify(papers.papers.filter((p) => Object.values(p).some((v) => v === null))).slice(0, 300)}`
 );
 console.log("  (schema guard: no null fields in papers ✓)");

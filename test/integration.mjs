@@ -7,6 +7,7 @@
  */
 import { apply as applyCore } from "../packages/dsh-chem-core/lib/index.js";
 import { apply as applyTools } from "../packages/dsh-tool-chem/lib/index.js";
+import { validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
 
 // Optional xtb binary for the calc method=xtb path (P4-1).
 const XTB_PATH =
@@ -65,7 +66,7 @@ console.log("registered tools:", names.join(", "));
 // 3) execute every tool against the real engine
 const cases = {
 	chem_validate: { smiles: ASPIRIN },
-	chem_props: { smiles: ASPIRIN, iupac: true },
+	chem_props: { smiles: ASPIRIN },
 	chem_convert: { smiles: ASPIRIN, format: "svg" },
 	chem_pubchem: { query: "aspirin" },
 	chem_calc: { smiles: ASPIRIN, method: "emt", optimize: true },
@@ -101,8 +102,16 @@ const cases = {
 	}
 };
 for (const tool of registered) {
-	if (tool.name === "chem_pdf") continue; // negative-path tool; exercised via engine test below
 	const out = await tool.execute(cases[tool.name]);
+	// Universal schema gate: the harness validates every real tool result against
+	// its declared output schema and throws ToolOutputError on a violation.
+	// Mirroring that check here turns schema drift into a test failure instead of
+	// a runtime rejection — the class of bug that hid the chem_props IUPAC and
+	// recipe-null defects (both had shipped because execute() alone was asserted).
+	const schemaViolations = validateJsonSchemaValue(tool.output.schema, out, "value");
+	if (schemaViolations.length > 0) {
+		throw new Error(`${tool.name} output violates its schema: ${schemaViolations.join("; ")}`);
+	}
 	const text = JSON.stringify(out);
 	console.log(`${tool.name} => ${text.length > 260 ? text.slice(0, 260) + "…" : text}`);
 	// Schema-conformance guard: the harness rejects a non-number mw. Regression
