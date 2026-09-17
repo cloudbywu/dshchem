@@ -1,0 +1,35 @@
+{
+  "name": "@dshchem/dsh-chem-core",
+  "version": "0.1.0",
+  "description": "Host-plane chemistry engine for DSH: RDKit/ASE-backed molecular service (validate / props / convert / calc / reaction), PubChem + Crossref lookups, recipe library, and browser tool-card structure rendering. Provides the `chem` service consumed by preset tool rows.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "files": [
+    "lib",
+    "python",
+    "vendor",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}

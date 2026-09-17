@@ -1,0 +1,10 @@
+# dsh-chem-core bundle patch: inserts the host-plane chemistry engine row into
+# the profile composition. Applied as a profile bundle layer (`dsh.bundle.patch`
+# manifest field). Activate with:
+#   dsh plugin --profile web add link:<repo>/packages/dsh-chem-core
+#
+# The row is a bare plugin by package name: its node half runs in the host
+# process and provides the `chem` service (RDKit python bridge + PubChem).
+- insert:
+    - id: chem-core
+      name: '@dshchem/dsh-chem-core'
