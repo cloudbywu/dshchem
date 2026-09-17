@@ -5,19 +5,31 @@ Reads one JSON request from stdin: {"op": <op>, "args": {...}}
 Writes one JSON response to stdout: {"ok": true, "result": {...}} | {"ok": false, "error": "..."}
 
 Ops:
-  validate  {smiles}                 -> canonical SMILES + identity fields
-  props     {smiles, iupac?}         -> molecular descriptors (RDKit)
-  convert   {smiles, format}         -> canonical | inchi | inchikey | mol | sdf | svg
-  calc      {smiles, method?, optimize?} -> ASE single-point/relaxation energy
-                                            (emt built-in | xtb if installed)
-  reaction  {mode:"balance", reaction} | {mode:"template", smarts, reactants}
-                                      -> atom-conservation check | SMARTS product prediction
-  pdftext   {path, maxPages?, maxChars?} -> PyMuPDF text extraction (literature layer)
+  validate          {smiles}            -> canonical SMILES + identity fields
+  props             {smiles}            -> molecular descriptors (RDKit)
+  convert           {smiles, format}    -> canonical | inchi | inchikey | mol | sdf | svg | xyz
+  calc              {smiles, method?, optimize?} -> ASE energy (emt built-in | xtb if installed)
+  reaction          {mode, ...}         -> atom-conservation check | SMARTS product prediction
+  pdftext           {path, ...}         -> PyMuPDF text extraction (literature layer)
+  retro_step        {smiles, ...}       -> one template retrosynthetic disconnection
+  retro_plan        {smiles, ...}       -> BFS retrosynthetic route planning
+  functional_groups {smiles}            -> SMARTS functional-group recognition
+  reagents          {template}          -> forward-synthesis condition hints
+  aizynth           {smiles, ...}       -> AiZynthFinder search via the PY314 venv
+  druglikeness      {smiles}            -> Lipinski/Veber/REOS + QED + SA score
+  similarity        {smiles, targets}   -> Tanimoto ranking
+  cluster           {smiles[], cutoff?} -> Butina clustering + Murcko scaffolds
+  mcs               {smilesA, smilesB}  -> maximum common substructure
+  enumerate         {scaffold, rgroups} -> R-group combinatorial enumeration
+  admet             {smiles}            -> admet_ai endpoint predictions
+  dock              {smiles, receptor, center, ...} -> AutoDock Vina docking
+  screen            {scaffold, rgroups, ...} -> one-shot virtual screening pipeline
 
 Facts only, no LLM: every output is computed by RDKit/ASE. The LLM must not
 invent structures or properties; this engine is the source of truth.
 """
 import json
+import math
 import os
 import shutil
 import sys
@@ -58,7 +70,6 @@ def op_validate(args):
 
 def op_props(args):
     smiles = str(args.get("smiles", "")).strip()
-    want_iupac = bool(args.get("iupac", False))
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return {"ok": False, "error": f"invalid SMILES: {smiles!r}"}
@@ -76,12 +87,6 @@ def op_props(args):
         "heavyAtoms": rdMolDescriptors.CalcNumHeavyAtoms(mol),
         "formalCharge": Chem.GetFormalCharge(mol),
     }
-    if want_iupac:
-        try:
-            result["iupacName"] = Chem.MolToIUPACName(mol)
-        except Exception as exc:  # IUPAC naming can fail for exotic molecules
-            result["iupacName"] = None
-            result["iupacError"] = str(exc)
     return {"ok": True, "result": result}
 
 
@@ -243,7 +248,12 @@ def op_calc(args):
         else:
             charge = int(args.get("charge", 0))
             e_after, relaxed, tail = _run_xtb(
-                atoms, charge, optimize, xtb_command, gfn=2, timeout_s=int(args.get("xtbTimeoutMs", 150000)) // 1000
+                atoms,
+                charge,
+                optimize,
+                xtb_command,
+                gfn=2,
+                timeout_s=max(1, min(int(args.get("xtbTimeoutMs", 150000)) // 1000, 3600)),
             )
             result = {
                 "method": "xtb (GFN2-xTB)",
@@ -346,8 +356,8 @@ def op_pdftext(args):
     path = str(args.get("path", "")).strip()
     if not path or not os.path.isfile(path):
         return {"ok": False, "error": f"file not found: {path!r}"}
-    max_pages = int(args.get("maxPages", 20))
-    max_chars = int(args.get("maxChars", 200000))
+    max_pages = max(1, min(int(args.get("maxPages", 20)), 500))
+    max_chars = max(1, min(int(args.get("maxChars", 200000)), 5_000_000))
     try:
         import fitz  # PyMuPDF
     except ImportError as exc:
@@ -356,17 +366,19 @@ def op_pdftext(args):
         doc = fitz.open(path)
     except Exception as exc:
         return {"ok": False, "error": f"cannot open PDF: {type(exc).__name__}: {exc}"}
-    total_pages = doc.page_count
-    extracted = min(total_pages, max_pages)
-    chunks = []
-    chars = 0
-    for index in range(extracted):
-        text = doc[index].get_text()
-        chunks.append(f"--- page {index + 1} ---\n{text}")
-        chars += len(text)
-        if chars >= max_chars:
-            break
-    doc.close()
+    try:
+        total_pages = doc.page_count
+        extracted = min(total_pages, max_pages)
+        chunks = []
+        chars = 0
+        for index in range(extracted):
+            text = doc[index].get_text()
+            chunks.append(f"--- page {index + 1} ---\n{text}")
+            chars += len(text)
+            if chars >= max_chars:
+                break
+    finally:
+        doc.close()
     return {
         "ok": True,
         "result": {
@@ -720,12 +732,25 @@ def op_aizynth(args):
     venv_python = (
         str(args.get("venvPython", "")).strip()
         or os.environ.get("AIZYNTH_PYTHON", "")
-        or "C:/Users/cloud/Desktop/aizynthfinder_dsh_314/venv314/Scripts/python.exe"
+        or os.path.join(
+            os.path.expanduser("~"),
+            "Desktop",
+            "aizynthfinder_dsh_314",
+            "venv314",
+            "Scripts",
+            "python.exe",
+        )
     )
     config = (
         str(args.get("config", "")).strip()
         or os.environ.get("AIZYNTH_CONFIG", "")
-        or "C:/Users/cloud/Desktop/aizynthfinder_dsh_314/data/config.yml"
+        or os.path.join(
+            os.path.expanduser("~"),
+            "Desktop",
+            "aizynthfinder_dsh_314",
+            "data",
+            "config.yml",
+        )
     )
     runner = os.path.normpath(os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools", "aizynth_run.py"
@@ -905,6 +930,8 @@ def op_cluster(args):
     if not isinstance(smiles_list, list) or not smiles_list:
         return {"ok": False, "error": "smiles must be a non-empty list"}
     cutoff = float(args.get("cutoff", 0.4))
+    if not 0.0 < cutoff <= 1.0:
+        return {"ok": False, "error": "cutoff must be within (0, 1]"}
     radius = int(args.get("radius", 2))
     nbits = int(args.get("nbits", 2048))
     mols = []
@@ -971,7 +998,7 @@ def op_mcs(args):
         return {"ok": False, "error": f"invalid SMILES B: {b!r}"}
     mcs = rdFMCS.FindMCS(
         [ma, mb],
-        timeout=int(args.get("timeout", 10)),
+        timeout=max(1, min(int(args.get("timeout", 10)), 300)),
         ringMatchesRingOnly=bool(args.get("ringMatchesRingOnly", True)),
         completeRingsOnly=False,
     )
@@ -1011,11 +1038,17 @@ def op_enumerate(args):
     if any(not rgroups[str(n)] for _, n in dummies):
         return {"ok": False, "error": "every mapped R-group needs at least one substituent"}
     max_products = max(int(args.get("maxProducts", 100)), 1)
-    combos = list(itertools.product(*[rgroups[str(n)] for _, n in dummies]))
-    truncated = len(combos) > max_products
+    # Count the full space cheaply and iterate lazily: materializing the whole
+    # Cartesian product first blows up memory for many R-groups.
+    total_combinations = 1
+    for _, map_number in dummies:
+        total_combinations *= len(rgroups[str(map_number)])
+    truncated = total_combinations > max_products
     products = []
     failed = 0
-    for combo in combos[:max_products]:
+    for combo in itertools.islice(
+        itertools.product(*[rgroups[str(n)] for _, n in dummies]), max_products
+    ):
         # string-template substitution: single-atom fragments splice
         # directly, multi-atom fragments are parenthesized
         template = scaffold
@@ -1047,7 +1080,7 @@ def op_enumerate(args):
         "ok": True,
         "result": {
             "scaffold": scaffold,
-            "combinations": len(combos),
+            "combinations": total_combinations,
             "generated": len(dedup),
             "failed": failed,
             "truncated": truncated,
@@ -1164,11 +1197,11 @@ def op_dock(args):
     vina_path = (
         str(args.get("vinaPath", "")).strip()
         or os.environ.get("VINA_PATH", "")
-        or "C:/Users/cloud/.dsh/chem/bin/vina/vina127.exe"
+        or os.path.join(os.path.expanduser("~"), ".dsh", "chem", "bin", "vina", "vina127.exe")
     )
     if not os.path.isfile(vina_path):
         return {"ok": False, "error": f"vina not found: {vina_path!r} (set VINA_PATH)"}
-    exhaustiveness = int(args.get("exhaustiveness", 8))
+    exhaustiveness = max(1, min(int(args.get("exhaustiveness", 8)), 64))
 
     try:
         from meeko import MoleculePreparation, PDBQTWriterLegacy
@@ -1284,28 +1317,6 @@ def op_dock(args):
         return {"ok": True, "result": result}
 
 
-OPS = {
-    "validate": op_validate,
-    "props": op_props,
-    "convert": op_convert,
-    "calc": op_calc,
-    "reaction": op_reaction,
-    "pdftext": op_pdftext,
-    "retro_step": op_retro_step,
-    "functional_groups": op_functional_groups,
-    "retro_plan": op_retro_plan,
-    "reagents": op_reagents,
-    "aizynth": op_aizynth,
-    "druglikeness": op_druglikeness,
-    "similarity": op_similarity,
-    "cluster": op_cluster,
-    "mcs": op_mcs,
-    "enumerate": op_enumerate,
-    "admet": op_admet,
-    "dock": op_dock,
-}
-
-
 # ── P8: virtual screening pipeline ──────────────────────────────────────────
 
 
@@ -1378,8 +1389,8 @@ def op_screen(args):
         try:
             from admet_ai import ADMETModel
 
-            model = ADMETModel()
             with contextlib.redirect_stdout(io.StringIO()):
+                model = ADMETModel()
                 batch = model.predict([p["smiles"] for p in passed])
         except Exception as exc:
             return {"ok": False, "error": f"admet batch failed: {type(exc).__name__}: {exc}"}
@@ -1483,23 +1494,59 @@ OPS = {
 }
 
 
+def _json_safe(value):
+    """Coerce a handler result into strict-JSON-safe values.
+
+    NaN/Infinity are not valid JSON and numpy scalars are not handled by the
+    stdlib encoder; either would abort serialization and break the
+    one-response-per-request protocol.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    item = getattr(value, "item", None)  # numpy scalar-like objects
+    if callable(item):
+        try:
+            return _json_safe(item())
+        except Exception:
+            pass
+    return str(value)
+
+
+def _emit(response):
+    """Serialize one response to stdout; never raise, so the caller always settles."""
+    try:
+        payload = json.dumps(_json_safe(response), ensure_ascii=False, allow_nan=False)
+    except Exception as exc:
+        payload = json.dumps(
+            {"ok": False, "error": f"response serialization failed: {type(exc).__name__}: {exc}"},
+            ensure_ascii=False,
+        )
+    print(payload, flush=True)
+
+
 def main():
     try:
         raw = sys.stdin.read()
         if not raw.strip():
-            print(json.dumps({"ok": False, "error": "empty request"}), flush=True)
-            return 1
+            _emit({"ok": False, "error": "empty request"})
+            return 0
         request = json.loads(raw)
         op = request.get("op")
         args = request.get("args") or {}
         handler = OPS.get(op)
         if handler is None:
-            print(json.dumps({"ok": False, "error": f"unknown op {op!r}; ops: {sorted(OPS)}"}), flush=True)
-            return 1
+            _emit({"ok": False, "error": f"unknown op {op!r}; ops: {sorted(OPS)}"})
+            return 0
         response = handler(args)
     except Exception as exc:
         response = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-    print(json.dumps(response, ensure_ascii=False), flush=True)
+    _emit(response)
     # Contract: a structured response (ok or error) is a RESPONSE, never a
     # process failure. Exit 0 always after printing; the caller reads the JSON.
     return 0
