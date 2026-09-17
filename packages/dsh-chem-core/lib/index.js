@@ -272,8 +272,7 @@ async function papersSearch(query, limit, timeoutMs) {
 					paper.abstract = item.abstract.slice(0, 2000);
 				}
 				return paper;
-			}),
-			error: null
+			})
 		};
 	} catch (error) {
 		if (error?.name === "AbortError") {
@@ -306,6 +305,28 @@ async function saveRecipes(recipes) {
 	await writeFile(file, JSON.stringify(recipes, null, 2), "utf8");
 }
 
+/**
+ * Normalize one stored record for tool output and keyword matching.
+ *
+ * The tool schemas declare smiles/project as strings under
+ * `additionalProperties: false`, so historical records written with null
+ * optional fields must have those keys omitted, and every field the render
+ * step reads must exist. Corrupt or hand-edited entries are tolerated.
+ */
+function normalizeRecipe(record) {
+	const source = record !== null && typeof record === "object" ? record : {};
+	const normalized = {
+		id: String(source.id ?? ""),
+		createdAt: String(source.createdAt ?? ""),
+		title: String(source.title ?? "untitled"),
+		tags: Array.isArray(source.tags) ? source.tags.map(String) : [],
+		content: String(source.content ?? "")
+	};
+	if (typeof source.smiles === "string" && source.smiles !== "") normalized.smiles = source.smiles;
+	if (typeof source.project === "string" && source.project !== "") normalized.project = source.project;
+	return normalized;
+}
+
 /** Append one recipe/note; returns the stored record with an id and timestamp. */
 async function recipeSave(entry) {
 	const recipes = await loadRecipes();
@@ -315,18 +336,18 @@ async function recipeSave(entry) {
 		title: String(entry.title ?? "untitled").slice(0, 200),
 		tags: Array.isArray(entry.tags) ? entry.tags.map(String).slice(0, 20) : [],
 		content: String(entry.content ?? "").slice(0, 20000),
-		smiles: typeof entry.smiles === "string" ? entry.smiles.slice(0, 2000) : null,
-		project: typeof entry.project === "string" ? entry.project.slice(0, 200) : null
+		...(typeof entry.smiles === "string" && entry.smiles !== "" ? { smiles: entry.smiles.slice(0, 2000) } : {}),
+		...(typeof entry.project === "string" && entry.project !== "" ? { project: entry.project.slice(0, 200) } : {})
 	};
 	recipes.push(record);
 	await saveRecipes(recipes);
-	return record;
+	return normalizeRecipe(record);
 }
 
 /** Search the ledger by substring over title/content/tags/smiles/project. */
 async function recipeSearch(query, limit) {
 	const q = String(query ?? "").toLowerCase();
-	const all = await loadRecipes();
+	const all = (await loadRecipes()).map(normalizeRecipe);
 	const hit = (r) =>
 		q === "" ||
 		r.title.toLowerCase().includes(q) ||
@@ -339,7 +360,7 @@ async function recipeSearch(query, limit) {
 }
 
 async function recipeList(limit) {
-	const all = await loadRecipes();
+	const all = (await loadRecipes()).map(normalizeRecipe);
 	const recent = all.slice(-200).reverse();
 	return { total: all.length, recipes: recent.slice(0, Math.min(limit ?? 20, 200)) };
 }
@@ -361,9 +382,8 @@ function makeService(call, callCalc, callSlow, config) {
 	return {
 		/** RDKit validate + canonicalize. */
 		validate: (smiles) => call("validate", { smiles }),
-		/** RDKit molecular descriptors; `options.iupac` requests an IUPAC name. */
-		props: (smiles, options = {}) =>
-			call("props", { smiles, iupac: options.iupac === true }),
+		/** RDKit molecular descriptors (no IUPAC name: RDKit has no such API). */
+		props: (smiles) => call("props", { smiles }),
 		/** Structure format conversion (canonical|inchi|inchikey|mol|sdf|svg). */
 		convert: (smiles, format) => call("convert", { smiles, format }),
 		/** ASE/xtb energy (emt | xtb), optional relaxation. Longer budget. */
