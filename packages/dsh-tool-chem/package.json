@@ -1,0 +1,19 @@
+{
+  "name": "@dshchem/dsh-tool-chem",
+  "version": "0.1.0",
+  "description": "Preset tool rows for the DSH chemist agent: chem_validate, chem_props, chem_convert, chem_pubchem — thin model-facing tools over the host `chem` service from @dshchem/dsh-chem-core.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "files": [
+    "lib",
+    "README.md"
+  ]
+}
