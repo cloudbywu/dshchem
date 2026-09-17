@@ -17,8 +17,10 @@ __pycache__/
 venv/
 
 # Local literature corpus: reference PDFs stay on disk, never committed
-# (publisher copyright). test/fixtures/*.pdf are synthetic and remain tracked.
-papers/
+# (publisher copyright). papers/README.md documents the convention and stays
+# tracked; test/fixtures/*.pdf are synthetic fixtures and also stay tracked.
+papers/*
+!papers/README.md
 
 # Generated test artifacts (rewritten by test/integration.mjs).
 test/screen-report*.md
