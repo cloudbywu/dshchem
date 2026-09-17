@@ -1,0 +1,11 @@
+# Normalize text to LF in the repository so every checkout matches the
+# Windows working tree (the system git config sets core.autocrlf=true).
+* text=auto eol=lf
+
+# Binary assets: never line-ending-convert.
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
