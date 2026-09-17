@@ -35,7 +35,7 @@ dsh plugin --profile web add "link:C:\path\to\dshchem\packages\dsh-chem-core"
 ## 服务 API
 
 - `validate(smiles)` → `{ok, result:{valid, canonical, formula, inchi, inchikey, heavyAtoms}}`
-- `props(smiles, {iupac?})` → 分子描述符（MW/exactMw/logP/HBD/HBA/TPSA/旋转键/芳香环/重原子/电荷/分子式，可选 IUPAC 名）
+- `props(smiles)` → 分子描述符（MW/exactMw/logP/HBD/HBA/TPSA/旋转键/芳香环/重原子/电荷/分子式）。IUPAC 名请用 `chem_pubchem`：RDKit 不提供 IUPAC 命名 API。
 - `convert(smiles, format)` → `canonical | inchi | inchikey | mol | sdf | svg`（SVG 为 2D 结构图）
 - `pubchemLookup(query, by)` → 按 `name | cid | smiles | inchikey` 查询属性
 - `pubchemSuggest(query, limit)` → 名称前缀自动补全

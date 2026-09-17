@@ -1,7 +1,7 @@
 {
   "name": "@dshchem/dsh-tool-chem",
   "version": "0.1.0",
-  "description": "Preset tool rows for the DSH chemist agent: chem_validate, chem_props, chem_convert, chem_pubchem — thin model-facing tools over the host `chem` service from @dshchem/dsh-chem-core.",
+  "description": "Preset tool rows for the DSH chemist agent: 24 chem_* tools (molecular properties, retrosynthesis, drug-likeness, ADMET, docking, virtual screening) as thin model-facing consumers of the host `chem` service from @dshchem/dsh-chem-core.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

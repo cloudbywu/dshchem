@@ -23,19 +23,32 @@
 
 设计决策（用户确认）：**host 服务 + 预设工具行分离**——引擎/网络/存储/路由在宿主平面跨会话共享，模型工具与 persona 仅化学预设会话可见；client 半通过 dsh.client 清单随 bundle 加载。
 
-## 工具清单（11 个）
+## 工具清单（24 个）
 
-| 工具 | 用途 | 后端 |
+| 工具 | 用途 | 关键输出 |
 |---|---|---|
-| `chem_validate` | SMILES 校验 + canonical 化 | RDKit |
-| `chem_props` | 分子描述符（MW/logP/TPSA/HBD/HBA/…） | RDKit |
-| `chem_convert` | 格式转换 + 2D SVG 结构图 | RDKit |
-| `chem_pubchem` | PubChem 交叉核对（CID/MW/XLogP3/TPSA/…）+ 名称补全 | PubChem PUG |
-| `chem_calc` | 单点/弛豫能量（emt 内置 / xtb 可选） | ASE |
-| `chem_reaction` | 反应原子守恒检查 + SMARTS 模板产物预测 | RDKit |
-| `chem_recipe_save/search/list` | 配方记忆库（ChemAgent 式知识沉淀，跨会话持久） | ~/.dsh/chem/recipes.json |
-| `chem_papers` | Crossref 文献检索（DOI/期刊/作者/摘要，免 key） | Crossref API |
-| `chem_pdf` | 本地 PDF 文本提取（文献层） | PyMuPDF |
+| `chem_validate` | SMILES 校验 + canonical 化 | canonical/formula/InChI/InChIKey/heavyAtoms |
+| `chem_props` | 分子描述符（RDKit） | MW/exactMw/logP/HBD/HBA/TPSA/旋转键/芳香环/电荷/分子式 |
+| `chem_convert` | 结构格式转换 + 2D/3D 结构图 | canonical/inchi/inchikey/mol/sdf/svg/xyz |
+| `chem_pubchem` | PubChem 交叉核对 + 名称自动补全 | CID/名称/分子式/MW/SMILES/IUPAC/InChIKey |
+| `chem_calc` | 能量计算 | emt / xtb GFN2-xTB 能量与弛豫 |
+| `chem_reaction` | 反应分析 | 原子守恒 / SMARTS 模板产物 |
+| `chem_recipe_save` / `_search` / `_list` | 配方记忆库 | id/title/tags/content（跨会话持久） |
+| `chem_papers` | 文献检索 | DOI/标题/期刊/年份/作者/摘要 |
+| `chem_pdf` | 本地 PDF 文本提取 | pages/chars/text |
+| `chem_retro_step` | 单步逆合成断键 | precursors/atomConserved/saScore |
+| `chem_functional_groups` | 官能团识别（24 种） | name/count |
+| `chem_retro_plan` | BFS 逆合成路线 | plans（route/terminal/reason） |
+| `chem_reagents` | 正向合成条件推荐 | conditions/notes |
+| `chem_aizynth` | AiZynthFinder 反应树搜索 | routes（score/reactionTree） |
+| `chem_druglikeness` | 类药性 + QED + SA | lipinski/veber/reos/verdict/qed/saScore |
+| `chem_similarity` | Tanimoto 相似性排序 | results（target/tanimoto/invalid） |
+| `chem_cluster` | Butina 聚类 + Murcko 骨架 | clusters/numSingletons/murckoScaffolds |
+| `chem_mcs` | 最大公共子结构 | smarts/numAtoms/numBonds |
+| `chem_enumerate` | R-group 组合枚举 | combinations/generated/products |
+| `chem_admet` | ADMET 端点预测（104 项） | endpoints/count |
+| `chem_dock` | AutoDock Vina 对接 | poses/bestAffinity_kcal_mol/batch |
+| `chem_screen` | 一站式虚拟筛选 | hits/failed/reportPath |
 
 ## 目录结构
 
@@ -45,14 +58,14 @@ dshchem/
 ├─ packages/
 │  ├─ dsh-chem-core/             # host 引擎（chem 服务 + Python/RDKit/ASE 桥 + PubChem/Crossref + 配方库 + 渲染路由 + 浏览器卡片）
 │  │  ├─ lib/index.js            # Cordis 插件：provide('chem') + /api/dsh-chem/render-svg 路由
-│  │  ├─ python/chem_engine.py   # 确定性引擎（validate/props/convert/calc/reaction/pdftext）
+│  │  ├─ python/chem_engine.py   # 确定性引擎（19 个 op：validate/props/…/admet/dock/screen）
 │  │  ├─ client.js               # 浏览器半：chem_* 工具卡片内嵌 2D 结构图（tool.call.toolview Slot）
 │  │  └─ cordis.patch.yml        # profile bundle 补丁
-│  └─ dsh-tool-chem/             # 预设工具行（11 个 chem_* 工具）
+│  └─ dsh-tool-chem/             # 预设工具行（24 个 chem_* 工具）
 │     └─ lib/index.js            # ctx.tools.register(defineTool(...))
 ├─ test/
 │  ├─ integration.mjs            # 端到端集成测试（真引擎 + 真工具注册 + schema 防回归断言）
-│  └─ benchmark.mjs              # ChemBench 风格评测（54 项：性质/校验/反应/计算/网络交叉核对/记忆）
+│  └─ benchmark.mjs              # ChemBench 风格评测（性质/校验/反应/计算/网络交叉核对/记忆/筛选）
 └─ node_modules/@deepseek-ai     # junction → harness 安装（依赖解析，见下）
 ```
 
@@ -70,11 +83,11 @@ dshchem/
 2. ✓ 技能包 `~/.dsh/skills/chem-literature`、`chem-safety`
 3. ✓ `dsh plugin --profile web add link:...dsh-chem-core`（profile package.json 已含 bundle）
 4. ✓ 挂载校验 `standingKeyFor('chemist')` = mounted OK（含工具行导入）
-5. ✓ 集成测试 + 评测基准全绿（`node test/integration.mjs`、`node test/benchmark.mjs`，58 项）
+5. ✓ 集成测试 + 评测基准全绿（`node test/integration.mjs`、`node test/benchmark.mjs`）；集成测试含**通用输出 schema 校验闸门**（对每个工具结果执行 harness 同款 `validateJsonSchemaValue`）
 6. ✓ 已修复 schema 校验类 bug：`chem_pubchem` mw 字符串类型、`chem_papers` 缺字段条目 null 冲突（均改为「缺失字段省略 + 回归断言」）、`chem_calc` xtbOutputTail 未声明字段
 7. ✓ 引擎即时生效机制（junction link + 每请求 spawn：改引擎源码无需重启 dsh）
 7. ⏳ **重启 dsh**：加载 chem-core（含新增 calc/reaction/papers/pdf/配方库/渲染路由与 client 卡片）
-8. ⏳ 重启后：GUI 设置里把默认预设切换为「化学科研」，新会话验证 11 个工具 + 工具卡片结构图
+8. ⏳ 重启后：GUI 设置里把默认预设切换为「化学科研」，新会话验证 24 个工具 + 工具卡片结构图
 
 ## 环境要求
 
